@@ -57,9 +57,7 @@ def get_centroid(human):
         body_part = human.body_parts[i]
         x.append(body_part.x)
         y.append(body_part.y)
-    x = sum(x)/len(x)
-    y = sum(y)/len(y)
-    return x, y
+    return np.median(x), np.median(y)
 
 
 def human2dict(human):
@@ -130,11 +128,13 @@ if __name__ == '__main__':
     target_centroid = state['target_centroid']
 
     timeseries_data = []
+    total_frames = 0
 
     while cap.isOpened():
-    
+
         ret_val, image = cap.read()
-        
+        total_frames += 1
+
         # check if the frame needs to be rotated
         if rotateCode is not None:
             image = correct_rotation(image, rotateCode)
@@ -142,13 +142,31 @@ if __name__ == '__main__':
         if not args.showBG:
             image = np.zeros(image.shape)
 
-        humans = e.inference(image, resize_to_default=(w > 0 and h > 0), upsample_size=args.resize_out_ratio)
-        for human in humans:
-            c = get_centroid(human)
-            if target_centroid[0] - 0.05 < c[0] < target_centroid[0] + 0.05 and \
-               target_centroid[1] - 0.05 < c[1] < target_centroid[1] + 0.05:
-                target_centroid = c
+        try:
+            humans = e.inference(image, resize_to_default=(w > 0 and h > 0), upsample_size=args.resize_out_ratio)
+        except:
+            # FIXME: inference throwing Exception: The image is not valid. Please check your image exists.
+            break
+
+        # Iteratively find the set of keypoints closest to the previous set
+        err = 0.005
+        max_passes = 10
+        centroids = list(map(get_centroid, humans))
+        human = None
+        for _ in range(max_passes):
+            for i, c in enumerate(centroids):
+                if target_centroid[0] - err < c[0] < target_centroid[0] + err and \
+                   target_centroid[1] - err < c[1] < target_centroid[1] + err:
+                    target_centroid = c
+                    human = humans[i]
+                    break
+            if human is not None:
                 break
+            err += 0.005
+
+        # No matching detection found
+        if human is None:
+            continue
 
         timeseries_data.append(human2dict(human))
 
@@ -161,6 +179,8 @@ if __name__ == '__main__':
             break
 
     cv2.destroyAllWindows()
+
+    print('Total frames: {}'.format(total_frames))
 
     path = os.path.basename(args.video) + '.json'
     with open(path, 'w') as f:
