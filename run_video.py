@@ -1,3 +1,6 @@
+import json
+import os
+
 import argparse
 import logging
 import time
@@ -59,6 +62,16 @@ def get_centroid(human):
     return x, y
 
 
+def human2dict(human):
+    out = {}
+    for i in range(common.CocoPart.Background.value):
+        if i not in human.body_parts.keys():
+            continue
+        body_part = human.body_parts[i]
+        out[i] = {'x': body_part.x, 'y': body_part.y}
+    return out
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='tf-pose-estimation Video')
     parser.add_argument('--video', type=str, default='')
@@ -116,6 +129,8 @@ if __name__ == '__main__':
     # get centroid of target human in first frame
     target_centroid = state['target_centroid']
 
+    timeseries_data = []
+
     while cap.isOpened():
     
         ret_val, image = cap.read()
@@ -134,6 +149,9 @@ if __name__ == '__main__':
                target_centroid[1] - 0.05 < c[1] < target_centroid[1] + 0.05:
                 target_centroid = c
                 break
+
+        timeseries_data.append(human2dict(human))
+
         image = TfPoseEstimator.draw_humans(image, [human], imgcopy=False)
 
         cv2.putText(image, "FPS: %f" % (1.0 / (time.time() - fps_time)), (10, 10),  cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
@@ -143,4 +161,9 @@ if __name__ == '__main__':
             break
 
     cv2.destroyAllWindows()
+
+    path = os.path.basename(args.video) + '.json'
+    with open(path, 'w') as f:
+        json.dump(timeseries_data, f)
+
 logger.debug('finished+')
