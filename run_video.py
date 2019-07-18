@@ -44,6 +44,21 @@ def check_rotation(path_video_file):
 def correct_rotation(frame, rotateCode):  
     return cv2.rotate(frame, rotateCode)
 
+
+def get_centroid(human):
+    x = []
+    y = []
+    for i in range(common.CocoPart.Background.value):
+        if i not in human.body_parts.keys():
+            continue
+        body_part = human.body_parts[i]
+        x.append(body_part.x)
+        y.append(body_part.y)
+    x = sum(x)/len(x)
+    y = sum(y)/len(y)
+    return x, y
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='tf-pose-estimation Video')
     parser.add_argument('--video', type=str, default='')
@@ -66,8 +81,41 @@ if __name__ == '__main__':
     # check if video requires rotation
     rotateCode = check_rotation(args.video)
 
-    if cap.isOpened() is False:
+    state = {}
+
+    if not cap.isOpened():
         print("Error opening video stream or file")
+    else:
+        # First frame
+        ret_val, image = cap.read()
+        # check if the frame needs to be rotated
+        if rotateCode is not None:
+            image = correct_rotation(image, rotateCode)
+
+        humans = e.inference(image, resize_to_default=(w > 0 and h > 0), upsample_size=args.resize_out_ratio)
+        if not args.showBG:
+            image = np.zeros(image.shape)
+
+        image = TfPoseEstimator.draw_humans(image, humans, imgcopy=False)
+
+        def select_target(event, x, y, flags, param):
+            if event == cv2.EVENT_LBUTTONDBLCLK:
+                image_h, image_w = image.shape[:2]
+                pos_x = x / image_w
+                pos_y = y / image_h
+                param['target_centroid'] = (pos_x, pos_y)
+
+
+        win_name = 'tf-pose-estimation result'
+        cv2.namedWindow(win_name)
+        cv2.setMouseCallback(win_name, select_target, state)
+        cv2.imshow(win_name, image)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+    # get centroid of target human in first frame
+    target_centroid = state['target_centroid']
+
     while cap.isOpened():
     
         ret_val, image = cap.read()
@@ -75,22 +123,23 @@ if __name__ == '__main__':
         # check if the frame needs to be rotated
         if rotateCode is not None:
             image = correct_rotation(image, rotateCode)
-            
-        #image = cv2.resize(image,(432,368))
 
-        humans = e.inference(image, resize_to_default=(w > 0 and h > 0), upsample_size=args.resize_out_ratio)
-        
         if not args.showBG:
             image = np.zeros(image.shape)
-            
-        #print(humans)
-            
-        image = TfPoseEstimator.draw_humans(image, humans, imgcopy=False)
+
+        humans = e.inference(image, resize_to_default=(w > 0 and h > 0), upsample_size=args.resize_out_ratio)
+        for human in humans:
+            c = get_centroid(human)
+            if target_centroid[0] - 0.05 < c[0] < target_centroid[0] + 0.05 and \
+               target_centroid[1] - 0.05 < c[1] < target_centroid[1] + 0.05:
+                target_centroid = c
+                break
+        image = TfPoseEstimator.draw_humans(image, [human], imgcopy=False)
 
         cv2.putText(image, "FPS: %f" % (1.0 / (time.time() - fps_time)), (10, 10),  cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        cv2.imshow('tf-pose-estimation result', image)
         fps_time = time.time()
-        if cv2.waitKey(1) == 27:
+        cv2.imshow('tf-pose-estimation result', image)
+        if cv2.waitKey(1) == ord('q'):
             break
 
     cv2.destroyAllWindows()
